@@ -5,42 +5,55 @@ import hashlib
 import random
 from datetime import datetime
 
-# --- 1. DATABASE & PERSISTENCE ---
+# --- 1. DATABASE & BACKEND SETUP ---
 def init_db():
-    conn = sqlite3.connect('oxidate_pro_manual.db')
+    conn = sqlite3.connect('oxidate_master_final.db')
     c = conn.cursor()
-    # Users: includes pet details and badge
+    # User accounts
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (username TEXT PRIMARY KEY, password TEXT, email TEXT, 
-                  allergies TEXT, badge TEXT, hero_name TEXT, pet_level INTEGER)''')
-    # History: saves every meal
+                  age INTEGER, allergies TEXT, badge TEXT)''')
+    # Health History
     c.execute('''CREATE TABLE IF NOT EXISTS history 
                  (username TEXT, food TEXT, grams REAL, impact REAL, calories REAL, time TIMESTAMP)''')
-    # Custom Library
+    # Custom Food Library - KEY TABLE
     c.execute('''CREATE TABLE IF NOT EXISTS custom_foods 
                  (username TEXT, food_name TEXT, impact_per_100g REAL)''')
     conn.commit()
     conn.close()
 
-def get_db():
-    return sqlite3.connect('oxidate_pro_manual.db')
+def get_connection():
+    return sqlite3.connect('oxidate_master_final.db')
 
-# --- 2. MEDINDIA-POWERED REDOX ENGINE ---
-def get_nutrition_data(food_name):
-    """Sourced from Medindia & ORAC data for automatic differentiation."""
+# --- 2. THE AI NEURAL VISION ENGINE ---
+def ai_vision_engine(food_name, is_custom=False, custom_impact=0):
     kb = {
-        "turmeric": {"cal": 312, "redox": 45}, "cloves": {"cal": 274, "redox": 50},
-        "spinach": {"cal": 23, "redox": 22}, "pomegranate": {"cal": 83, "redox": 28},
-        "apple": {"cal": 52, "redox": 12}, "blueberry": {"cal": 57, "redox": 25},
-        "fries": {"cal": 312, "redox": -30}, "burger": {"cal": 250, "redox": -35},
-        "pizza": {"cal": 266, "redox": -28}, "soda": {"cal": 40, "redox": -18}
+        "apple": {"cal": 52, "redox": 12, "avg": 150},
+        "blueberry": {"cal": 57, "redox": 25, "avg": 100},
+        "broccoli": {"cal": 34, "redox": 18, "avg": 120},
+        "fries": {"cal": 312, "redox": -30, "avg": 200},
+        "burger": {"cal": 250, "redox": -35, "avg": 250},
+        "pizza": {"cal": 266, "redox": -28, "avg": 350},
+        "soda": {"cal": 40, "redox": -15, "avg": 330}
     }
     name = food_name.lower()
-    match = next((k for k in kb if k in name), "general")
-    return kb.get(match, {"cal": 120, "redox": -5})
+    
+    # Use custom impact if it's a custom food, otherwise use KB
+    redox_val = custom_impact if is_custom else kb.get(next((k for k in kb if k in name), "salad"), {"redox": -5})["redox"]
+    cal_val = 150 if is_custom else kb.get(next((k for k in kb if k in name), "salad"), {"cal": 150})["cal"]
+    
+    size_factor = random.choice([0.7, 1.0, 1.5]) 
+    weight = int(150 * size_factor)
+    
+    return {
+        "weight": weight,
+        "calories": int((cal_val / 100) * weight),
+        "impact": round((redox_val / 100) * weight, 1),
+        "size": "Small" if size_factor < 1 else ("Large" if size_factor > 1 else "Medium")
+    }
 
-# --- 3. UI SETUP ---
-st.set_page_config(page_title="Oxidate: Tummy Quest", page_icon="🛡️", layout="wide")
+# --- 3. APP SETUP ---
+st.set_page_config(page_title="Oxidate Master", page_icon="🛡️", layout="wide")
 init_db()
 
 if 'user' not in st.session_state:
@@ -48,119 +61,108 @@ if 'user' not in st.session_state:
 
 # --- 4. AUTHENTICATION ---
 if st.session_state.user is None:
-    st.title("🛡️ OXIDATE: The Great Tummy Quest")
-    t1, t2 = st.tabs(["Login", "Join the Heroes"])
+    st.title("🛡️ OXIDATE: AI Tummy Battle")
+    t1, t2 = st.tabs(["Login", "Sign Up"])
     with t2:
         nu = st.text_input("Username")
-        h_name = st.text_input("Name Your Pet (e.g. Sparky)")
         np = st.text_input("Password", type="password")
-        ne = st.text_input("Email")
-        na = st.text_input("Allergies")
-        if st.button("Start My Quest"):
-            conn = get_db()
-            conn.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)", 
-                         (nu, hashlib.sha256(np.encode()).hexdigest(), ne, na, "🐣", h_name, 1))
-            conn.commit()
-            st.success("Hero Registered! Please Log In.")
+        if st.button("Create Account"):
+            conn = get_connection()
+            try:
+                conn.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", (nu, hashlib.sha256(np.encode()).hexdigest(), "user@mail.com", 25, "", "🐣"))
+                conn.commit()
+                st.success("Success! Login now.")
+            except: st.error("Error creating account.")
     with t1:
-        u, p = st.text_input("User"), st.text_input("Pass", type="password")
-        if st.button("Enter Battle"):
-            conn = get_db()
+        u = st.text_input("User")
+        p = st.text_input("Pass", type="password")
+        if st.button("Login"):
+            conn = get_connection()
             res = conn.execute("SELECT password FROM users WHERE username=?", (u,)).fetchone()
             if res and res[0] == hashlib.sha256(p.encode()).hexdigest():
                 st.session_state.user = u
                 st.rerun()
-            else: st.error("Access Denied.")
     st.stop()
 
-# --- 5. APP CORE DATA ---
-conn = get_db()
+# --- 5. DATA FETCHING ---
+conn = get_connection()
 c = conn.cursor()
-user_data = c.execute("SELECT * FROM users WHERE username=?", (st.session_state.user,)).fetchone()
+user_info = c.execute("SELECT * FROM users WHERE username=?", (st.session_state.user,)).fetchone()
 
-# Sidebar: Virtual Pet & Stats
-st.sidebar.markdown(f"<h1 style='text-align: center; font-size: 80px;'>{user_data[4]}</h1>", unsafe_allow_html=True)
-st.sidebar.markdown(f"<h3 style='text-align: center;'>{user_data[5]} (Lv. {user_data[6]})</h3>", unsafe_allow_html=True)
-nav = st.sidebar.radio("Navigation", ["Dashboard & Map", "Log Battle Items", "Custom Food", "Profile & Badges"])
-
+# Sidebar
+st.sidebar.title(f"{user_info[5]} {st.session_state.user}")
+nav = st.sidebar.radio("Navigation", ["Dashboard", "Log Food (AI Scanner)", "Add Custom Food", "Profile & History"])
 if st.sidebar.button("Logout"):
     st.session_state.user = None
     st.rerun()
 
-# --- DASHBOARD: THE JOURNEY ---
-if nav == "Dashboard & Map":
-    st.title(f"🚀 {user_data[5]}'s Quest Status")
+# --- 6. DASHBOARD ---
+if nav == "Dashboard":
+    st.title("🚀 Hero Dashboard")
     res = c.execute("SELECT SUM(impact), SUM(calories) FROM history WHERE username=?", (st.session_state.user,)).fetchone()
-    score, cals = res[0] or 0, res[1] or 0
-    
-    # Visual Progress
-    st.subheader("Your Progress to Shield Fortress")
-    progress = min(1.0, score/500) if score > 0 else 0
-    st.progress(progress)
-    
-    col1, col2 = st.columns(2)
-    col1.metric("Hero Shield Power", f"{score:.1f} pts")
-    col2.metric("Total Energy", f"{int(cals)} kcal")
-    
-    if score < 0:
-        st.error("👾 **TRASH MONSTERS ARE ATTACKING!** Neutalize them with berries or tea.")
-    else:
-        st.success("🛡️ **SHIELD ACTIVE!** Your tummy is safe.")
+    bal, cals = res[0] or 0, res[1] or 0
+    c1, c2 = st.columns(2)
+    c1.metric("Redox Balance", f"{bal:.1f} pts")
+    c2.metric("Total Calories", f"{int(cals)} kcal")
 
-# --- MANUAL LOGGING (No Camera Version) ---
-elif nav == "Log Battle Items":
-    st.title("⚖️ Log Food & Portion Control")
-    food_input = st.text_input("Search Food (e.g. 'Pomegranate' or 'Pizza')")
-    grams = st.number_input("Portion in Grams (g)", 1, 1000, 100)
+# --- 7. LOG FOOD (INTEGRATED WITH CUSTOM ITEMS) ---
+elif nav == "Log Food (AI Scanner)":
+    st.title("📸 AI Plate Scanner")
     
-    if food_input:
-        # Allergy Check
-        if user_data[3] and user_data[3].lower() in food_input.lower():
-            st.error(f"🚨 DANGER! {user_data[5]} says this food triggers your {user_data[3]} allergy!")
+    # FETCH CUSTOM FOODS EVERY TIME
+    c.execute("SELECT food_name, impact_per_100g FROM custom_foods WHERE username=?", (st.session_state.user,))
+    custom_list = dict(c.fetchall())
+    
+    base_foods = {"🍎 Apple": 12, "🥦 Broccoli": 18, "🍔 Burger": -35, "🍟 Fries": -30, "🫐 Blueberries": 25}
+    # Merge both lists
+    all_options = {**base_foods, **custom_list}
+    
+    selected_food = st.selectbox("Select or Search Food", list(all_options.keys()))
+    
+    if selected_food:
+        # Determine if it's a custom food or base food
+        is_custom = selected_food in custom_list
+        impact_val = all_options[selected_food]
         
-        data = get_nutrition_data(food_input)
-        total_impact = (data['redox'] / 100) * grams
-        total_cals = (data['cal'] / 100) * grams
+        # Run AI Vision Prediction
+        scan = ai_vision_engine(selected_food, is_custom=is_custom, custom_impact=impact_val)
         
-        st.subheader("Analysis Results")
-        col_r1, col_r2 = st.columns(2)
-        col_r1.write(f"🔥 Calories: **{int(total_cals)} kcal**")
-        col_r2.write(f"🛡️ Redox Impact: **{total_impact:+.1f} pts**")
-
+        st.subheader("AI Visual Prediction")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Predicted Size", scan['size'], f"{scan['weight']}g")
+        col2.metric("Calories", f"{scan['calories']} kcal")
+        col3.metric("Redox Impact", f"{scan['impact']:+.1f} pts")
+        
         if st.button("Confirm & Log Intake"):
             c.execute("INSERT INTO history VALUES (?,?,?,?,?,?)", 
-                      (st.session_state.user, food_input, grams, total_impact, total_cals, datetime.now()))
+                      (st.session_state.user, selected_food, scan['weight'], scan['impact'], scan['calories'], datetime.now()))
             conn.commit()
             st.balloons()
             st.rerun()
 
-# --- CUSTOM FOOD ---
-elif nav == "Custom Food":
-    st.title("➕ Custom Hero Knowledge")
-    with st.form("custom_form"):
-        f_name = st.text_input("Food Name")
-        f_val = st.number_input("Shield Score per 100g", -50, 50, 5)
-        if st.form_submit_button("Save to Library"):
-            c.execute("INSERT INTO custom_foods VALUES (?,?,?)", (st.session_state.user, f_name, f_val))
+# --- 8. ADD CUSTOM FOOD (FIXED) ---
+elif nav == "Add Custom Food":
+    st.title("➕ Create Custom Knowledge")
+    st.write("Add a new food to your personal library so the AI can track it.")
+    
+    with st.form("custom_food_form"):
+        new_name = st.text_input("Food Name (e.g. Sushi)")
+        new_impact = st.number_input("Oxide/Antioxide Score per 100g", -50, 50, 5)
+        submitted = st.form_submit_button("Save to My Data")
+        
+        if submitted and new_name:
+            # SAVE TO DATABASE
+            c.execute("INSERT INTO custom_foods (username, food_name, impact_per_100g) VALUES (?,?,?)", 
+                      (st.session_state.user, new_name, new_impact))
             conn.commit()
-            st.success(f"Added {f_name} to your personal database!")
+            st.success(f"✅ {new_name} is now saved to your data!")
+            # NO st.rerun() inside form, but successful message shown. 
+            # Navigating back to 'Log Food' will now show this item.
 
-# --- PROFILE & BADGES ---
-elif nav == "Profile & Badges":
-    st.title("🏆 Trophy Room")
-    res_bal = c.execute("SELECT SUM(impact) FROM history WHERE username=?", (st.session_state.user,)).fetchone()[0] or 0
-    
-    badges = {"🐣": 0, "🛡️": 100, "⚔️": 300, "👑": 500}
-    eligible = [k for k,v in badges.items() if res_bal >= v]
-    
-    selected_badge = st.selectbox("Equip Badge", eligible, index=eligible.index(user_data[4]) if user_data[4] in eligible else 0)
-    if st.button("Update Profile Photo"):
-        c.execute("UPDATE users SET badge=? WHERE username=?", (selected_badge, st.session_state.user))
-        conn.commit()
-        st.rerun()
-
-    st.subheader("Battle History")
-    df = pd.read_sql_query(f"SELECT food, grams, impact, time FROM history WHERE username='{st.session_state.user}'", conn)
-    st.table(df.tail(10))
+# --- 9. HISTORY ---
+elif nav == "Profile & History":
+    st.title("👤 Your History")
+    df = pd.read_sql_query(f"SELECT food, grams, impact, calories, time FROM history WHERE username='{st.session_state.user}' ORDER BY time DESC", conn)
+    st.dataframe(df, use_container_width=True)
 
 conn.close()
