@@ -5,25 +5,35 @@ import hashlib
 import requests
 from datetime import datetime
 
-# --- 1. CONFIGURATION & API ---
-# Get a free API key at https://spoonacular.com/food-api
-API_KEY = "YOUR_SPOONACULAR_API_KEY" 
+# --- 1. CORE ENGINE: DIFFERENTIATOR ---
+def calculate_oxide_score(food_name):
+    """
+    Strictly differentiates between Oxides (Fried) and Anti-oxides (Fruits/Veggies).
+    Returns a 'Points per 100g' value.
+    """
+    name = food_name.lower()
+    
+    # Category 1: THE OXIDES (Pro-oxidants / Trash Monsters)
+    # Keywords for fried, oily, or high-sugar items
+    oxide_keywords = ['fried', 'fries', 'burger', 'pizza', 'soda', 'donut', 'crispy', 'grease', 'oil', 'chip']
+    
+    # Category 2: THE ANTI-OXIDES (Shield Heroes)
+    # Keywords for fresh produce and healing items
+    antioxidant_keywords = ['fruit', 'berry', 'apple', 'orange', 'veg', 'leaf', 'spinach', 'broccoli', 'kale', 'tea', 'salad']
 
-def get_calories_api(query):
-    """Fetches real calorie data per 100g using Spoonacular API."""
-    try:
-        url = f"https://api.spoonacular.com/food/ingredients/search?query={query}&apiKey={API_KEY}"
-        res = requests.get(url).json()
-        if res['results']:
-            id = res['results'][0]['id']
-            info = requests.get(f"https://api.spoonacular.com/food/ingredients/{id}/information?amount=100&unit=grams&apiKey={API_KEY}").json()
-            return info['nutrition']['nutrients'][0]['amount'] # Returns kcal
-    except:
-        return None # Fallback if API fails or key is missing
+    # Logic Check: Prioritize 'Fried' detection to avoid misclassifying 'French Fries'
+    if any(word in name for word in oxide_keywords):
+        return -25  # High Oxidative Impact
+    elif any(word in name for word in antioxidant_keywords):
+        return 15   # High Antioxidant Impact
+    else:
+        return 0    # Neutral/Unknown
 
-# --- 2. BACKEND SETUP ---
+# --- 2. BACKEND & API SETUP ---
+API_KEY = "YOUR_SPOONACULAR_API_KEY" # Optional for Calorie Accuracy
+
 def init_db():
-    conn = sqlite3.connect('oxidate_ultimate.db')
+    conn = sqlite3.connect('oxidate_pro_v5.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (username TEXT PRIMARY KEY, email TEXT, password TEXT, allergies TEXT, is_pro BOOLEAN, icon TEXT)''')
@@ -34,120 +44,95 @@ def init_db():
 
 init_db()
 
-# --- 3. SESSION STATE ---
+# --- 3. UI & AUTHENTICATION ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user = None
 
-# --- 4. AUTHENTICATION ---
 if not st.session_state.logged_in:
-    st.title("🧪 Oxidate: Balance & Calories")
-    auth = st.tabs(["Login", "Sign Up"])
-    with auth[1]:
-        u = st.text_input("New Username")
-        p = st.text_input("New Password", type="password")
-        e = st.text_input("Email")
-        allg = st.text_input("Allergies")
-        if st.button("Create Account"):
-            conn = sqlite3.connect('oxidate_ultimate.db')
+    st.title("🧪 Oxidate: Pro-Health Tracker")
+    t1, t2 = st.tabs(["Login", "Sign Up"])
+    with t2:
+        u, p, e, al = st.text_input("Username"), st.text_input("Password", type="password"), st.text_input("Email"), st.text_input("Allergies")
+        if st.button("Register"):
+            conn = sqlite3.connect('oxidate_pro_v5.db')
             c = conn.cursor()
-            c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", (u, e, hashlib.sha256(p.encode()).hexdigest(), allg, False, "🐣"))
+            c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", (u, e, hashlib.sha256(p.encode()).hexdigest(), al, False, "🐣"))
             conn.commit()
-            st.success("Welcome Hero! Now Login.")
-    with auth[0]:
-        u_log = st.text_input("Username")
-        p_log = st.text_input("Password", type="password")
+            st.success("Hero Created!")
+    with t1:
+        u_l, p_l = st.text_input("User"), st.text_input("Pass", type="password")
         if st.button("Login"):
-            conn = sqlite3.connect('oxidate_ultimate.db')
+            conn = sqlite3.connect('oxidate_pro_v5.db')
             c = conn.cursor()
-            c.execute("SELECT password FROM users WHERE username=?", (u_log,))
+            c.execute("SELECT password FROM users WHERE username=?", (u_l,))
             res = c.fetchone()
-            if res and res[0] == hashlib.sha256(p_log.encode()).hexdigest():
-                st.session_state.logged_in = True
-                st.session_state.user = u_log
+            if res and res[0] == hashlib.sha256(p_l.encode()).hexdigest():
+                st.session_state.logged_in, st.session_state.user = True, u_l
                 st.rerun()
     st.stop()
 
-# --- 5. APP CORE ---
-conn = sqlite3.connect('oxidate_ultimate.db')
+# --- 4. MAIN DASHBOARD ---
+conn = sqlite3.connect('oxidate_pro_v5.db')
 c = conn.cursor()
 c.execute("SELECT * FROM users WHERE username=?", (st.session_state.user,))
-user_info = c.fetchone() # (u, e, p, all, pro, icon)
+user_info = c.fetchone()
 
-# Sidebar
 st.sidebar.title(f"{user_info[5]} {st.session_state.user}")
-menu = st.sidebar.radio("Menu", ["Dashboard", "Log Food", "Profile"])
-if st.sidebar.button("Logout"):
-    st.session_state.logged_in = False
-    st.rerun()
+menu = st.sidebar.radio("Navigation", ["Dashboard", "Log Food", "History", "Profile"])
 
-# --- 6. DASHBOARD (The Purpose) ---
 if menu == "Dashboard":
-    st.title("🚀 Hero Command Center")
+    st.title("🛡️ Tummy Battle Command")
     
     # Purpose Section
-    with st.expander("📖 Why are we here? (The Purpose)", expanded=True):
-        col_a, col_k = st.columns(2)
-        col_a.markdown("### 🧑‍🔬 For Adults\n**Goal:** Neutralize Oxidative Stress.\nEvery time you eat, your body creates 'Free Radicals' (Oxides). If you have too many, they damage your DNA. We track **Antioxidants** to stop that damage.")
-        col_k.markdown("### 🛡️ For Kids\n**Goal:** Defeat the Trash Monsters!\nJunk food creates monsters in your tummy. Healthy food sends in **Shield Heroes**. Keep your score green to stay a Superhero!")
+    st.info("### The Goal: Oxide Neutralization")
+    st.write("**Oxides (Trash Monsters):** Found in fried food. They steal energy from your cells.")
+    st.write("**Anti-oxides (Shield Heroes):** Found in fruits. They protect your cells and give them energy.")
 
-    # Stats
     c.execute("SELECT SUM(impact), SUM(calories) FROM history WHERE username=?", (st.session_state.user,))
     stats = c.fetchone()
     bal, cals = stats[0] or 0, stats[1] or 0
     
-    st.divider()
-    c1, c2 = st.columns(2)
-    c1.metric("Oxidate Balance", f"{bal:.1f} pts", delta="Healthy" if bal >=0 else "Oxidized")
-    c2.metric("Total Calories", f"{int(cals)} kcal")
+    col1, col2 = st.columns(2)
+    col1.metric("Net Balance Score", f"{bal:.1f}", delta="Healing" if bal >= 0 else "Oxidizing")
+    col2.metric("Energy Consumed", f"{int(cals)} kcal")
 
-# --- 7. LOG FOOD (API Integration) ---
+# --- 5. LOG FOOD (Fixed Logic) ---
 elif menu == "Log Food":
-    st.title("⚖️ Precision Intake & Calorie Tracker")
-    food_search = st.text_input("Search food (e.g., 'Blueberries' or 'Pizza')")
+    st.title("⚖️ Precision Intake")
+    food_name = st.text_input("Enter Food (e.g., 'French Fries' or 'Blueberry')")
     grams = st.number_input("Weight (Grams)", 1, 1000, 100)
-    
-    if food_search:
-        # Check Allergy
-        if user_info[3] and user_info[3].lower() in food_search.lower():
-            st.error(f"🚨 WARNING: {food_search} triggers your {user_info[3]} allergy!")
+
+    if food_name:
+        # Check Allergies
+        if user_info[3] and user_info[3].lower() in food_name.lower():
+            st.error(f"🚨 STOP! Allergy detected for: {user_info[3]}")
         
-        # Calculate Scores
-        cal_per_100 = get_calories_api(food_search) or 150 # Fallback 150 if no API key
-        oxide_base = 15 if "fruit" in food_search or "veg" in food_search else -20 # Simple logic
+        # Calculate Score using the new differentiator
+        base_score = calculate_oxide_score(food_name)
+        total_impact = (base_score / 100) * grams
         
-        total_cals = (cal_per_100 / 100) * grams
-        total_impact = (oxide_base / 100) * grams
-        
-        st.write(f"📊 **Analysis:** {total_cals:.0f} Calories | {total_impact:+.1f} Oxide Score")
-        
+        # Calorie Logic (Simplified for this demo, can connect to API)
+        cal_est = 300 if base_score < 0 else 50 
+        total_cals = (cal_est / 100) * grams
+
+        st.subheader("Analysis Preview")
+        if base_score < 0:
+            st.error(f"👾 This is an **Oxide** (Fried/Heavy). It will add **{total_impact}** points of stress.")
+        elif base_score > 0:
+            st.success(f"🛡️ This is an **Anti-oxide** (Fruit/Veg). It will add **{total_impact}** points of protection.")
+        else:
+            st.warning("⚖️ This food is Neutral.")
+
         if st.button("Log to Backend"):
             c.execute("INSERT INTO history VALUES (?,?,?,?,?,?)", 
-                      (st.session_state.user, food_search, grams, total_impact, total_cals, datetime.now()))
+                      (st.session_state.user, food_name, grams, total_impact, total_cals, datetime.now()))
             conn.commit()
-            st.success("Saved to your history!")
+            st.success("Logged successfully!")
 
-# --- 8. PROFILE (Badge System) ---
-elif menu == "Profile":
-    st.title("👤 Hero Profile")
-    st.write(f"Email: {user_info[1]}")
-    
-    # Badge Logic
-    c.execute("SELECT SUM(impact) FROM history WHERE username=?", (st.session_state.user,))
-    b = c.fetchone()[0] or 0
-    badges = {"🐣":0, "🛡️":100, "⚔️":300, "👑":500}
-    
-    selected_icon = st.selectbox("Select Earned Badge", [k for k,v in badges.items() if b >= v])
-    if st.button("Update Profile Photo"):
-        c.execute("UPDATE users SET icon=? WHERE username=?", (selected_icon, st.session_state.user))
-        conn.commit()
-        st.rerun()
-
-    if not user_info[4]:
-        if st.button("Upgrade to PRO ($9)"):
-            c.execute("UPDATE users SET is_pro=1 WHERE username=?", (st.session_state.user,))
-            conn.commit()
-            st.balloons()
-            st.rerun()
+# --- 6. LOGOUT ---
+if st.sidebar.button("Logout"):
+    st.session_state.logged_in = False
+    st.rerun()
 
 conn.close()
