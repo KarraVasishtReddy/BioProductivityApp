@@ -2,203 +2,152 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import hashlib
+import requests
 from datetime import datetime
 
-# --- 1. DATABASE & BACKEND SETUP ---
+# --- 1. CONFIGURATION & API ---
+# Get a free API key at https://spoonacular.com/food-api
+API_KEY = "YOUR_SPOONACULAR_API_KEY" 
+
+def get_calories_api(query):
+    """Fetches real calorie data per 100g using Spoonacular API."""
+    try:
+        url = f"https://api.spoonacular.com/food/ingredients/search?query={query}&apiKey={API_KEY}"
+        res = requests.get(url).json()
+        if res['results']:
+            id = res['results'][0]['id']
+            info = requests.get(f"https://api.spoonacular.com/food/ingredients/{id}/information?amount=100&unit=grams&apiKey={API_KEY}").json()
+            return info['nutrition']['nutrients'][0]['amount'] # Returns kcal
+    except:
+        return None # Fallback if API fails or key is missing
+
+# --- 2. BACKEND SETUP ---
 def init_db():
-    conn = sqlite3.connect('oxidate_final.db')
+    conn = sqlite3.connect('oxidate_ultimate.db')
     c = conn.cursor()
-    # Users: profile_icon stores the badge name used as a photo
     c.execute('''CREATE TABLE IF NOT EXISTS users 
-                 (username TEXT PRIMARY KEY, email TEXT, password TEXT, age INTEGER, 
-                  allergies TEXT, is_pro BOOLEAN, profile_icon TEXT)''')
+                 (username TEXT PRIMARY KEY, email TEXT, password TEXT, allergies TEXT, is_pro BOOLEAN, icon TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS history 
-                 (username TEXT, food TEXT, grams REAL, impact REAL, time TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS custom_foods 
-                 (username TEXT, food_name TEXT, impact_per_100g INTEGER)''')
+                 (username TEXT, food TEXT, grams REAL, impact REAL, calories REAL, time TIMESTAMP)''')
     conn.commit()
     conn.close()
 
-def get_db_connection():
-    return sqlite3.connect('oxidate_final.db')
-
-def hash_pass(password):
-    return hashlib.sha256(str.encode(password)).hexdigest()
-
-# --- 2. APP MASTER DATA ---
-FOOD_DB_100G = {
-    "🍎 Apple": 8, "🫐 Blueberries": 25, "🥦 Broccoli": 15, "🥬 Spinach": 18, 
-    "🍚 White Rice": 2, "🌾 Brown Rice": 7, "🍗 Chicken Breast": 12,
-    "🍔 Double Burger": -35, "🍟 Large Fries": -22, "🍕 Pizza": -28, "🥤 Soda": -18
-}
-
-BADGE_ICONS = {
-    "Beginner": "🐣",
-    "Shield Scout": "🛡️",
-    "Berry Knight": "🫐",
-    "Oxide Crusher": "⚔️",
-    "Rainbow Master": "🌈",
-    "Legendary Protector": "👑"
-}
-
-# --- 3. SESSION & STYLES ---
-st.set_page_config(page_title="Oxidate Pro", page_icon="🧪", layout="wide")
 init_db()
 
+# --- 3. SESSION STATE ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user = None
 
-# --- 4. AUTHENTICATION FLOW ---
+# --- 4. AUTHENTICATION ---
 if not st.session_state.logged_in:
-    st.title("🧪 Oxidate: Balance Your Internal Chemistry")
-    auth_tab1, auth_tab2 = st.tabs(["Login", "Sign Up"])
-
-    with auth_tab1:
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
-        if st.button("Enter Tummy Town"):
-            conn = get_db_connection()
+    st.title("🧪 Oxidate: Balance & Calories")
+    auth = st.tabs(["Login", "Sign Up"])
+    with auth[1]:
+        u = st.text_input("New Username")
+        p = st.text_input("New Password", type="password")
+        e = st.text_input("Email")
+        allg = st.text_input("Allergies")
+        if st.button("Create Account"):
+            conn = sqlite3.connect('oxidate_ultimate.db')
             c = conn.cursor()
-            c.execute("SELECT password FROM users WHERE username=?", (u,))
+            c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)", (u, e, hashlib.sha256(p.encode()).hexdigest(), allg, False, "🐣"))
+            conn.commit()
+            st.success("Welcome Hero! Now Login.")
+    with auth[0]:
+        u_log = st.text_input("Username")
+        p_log = st.text_input("Password", type="password")
+        if st.button("Login"):
+            conn = sqlite3.connect('oxidate_ultimate.db')
+            c = conn.cursor()
+            c.execute("SELECT password FROM users WHERE username=?", (u_log,))
             res = c.fetchone()
-            if res and res[0] == hash_pass(p):
+            if res and res[0] == hashlib.sha256(p_log.encode()).hexdigest():
                 st.session_state.logged_in = True
-                st.session_state.user = u
+                st.session_state.user = u_log
                 st.rerun()
-            else:
-                st.error("Access Denied.")
-
-    with auth_tab2:
-        new_u = st.text_input("New Username")
-        new_e = st.text_input("Email")
-        new_p = st.text_input("New Password", type="password")
-        new_all = st.text_area("Allergies (comma separated)")
-        if st.button("Create Hero Account"):
-            conn = get_db_connection()
-            c = conn.cursor()
-            try:
-                c.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?)", 
-                          (new_u, new_e, hash_pass(new_p), 25, new_all, False, "Beginner"))
-                conn.commit()
-                st.success("Registration Successful!")
-            except:
-                st.error("Username taken.")
     st.stop()
 
-# --- 5. MAIN NAVIGATION ---
-conn = get_db_connection()
+# --- 5. APP CORE ---
+conn = sqlite3.connect('oxidate_ultimate.db')
 c = conn.cursor()
 c.execute("SELECT * FROM users WHERE username=?", (st.session_state.user,))
-curr_user = c.fetchone() # (0:u, 1:e, 2:p, 3:age, 4:allergies, 5:pro, 6:icon)
+user_info = c.fetchone() # (u, e, p, all, pro, icon)
 
-st.sidebar.markdown(f"<h1 style='text-align: center;'>{BADGE_ICONS[curr_user[6]]}</h1>", unsafe_allow_html=True)
-st.sidebar.markdown(f"<h3 style='text-align: center;'>{st.session_state.user}</h3>", unsafe_allow_html=True)
-
-menu = st.sidebar.radio("Navigate", ["Dashboard", "Log Food", "Profile", "Admin"])
-
+# Sidebar
+st.sidebar.title(f"{user_info[5]} {st.session_state.user}")
+menu = st.sidebar.radio("Menu", ["Dashboard", "Log Food", "Profile"])
 if st.sidebar.button("Logout"):
     st.session_state.logged_in = False
     st.rerun()
 
-# --- 6. DASHBOARD ---
+# --- 6. DASHBOARD (The Purpose) ---
 if menu == "Dashboard":
-    st.title("🛡️ Shield Hero Dashboard")
+    st.title("🚀 Hero Command Center")
     
-    # Calculate Balance
-    c.execute("SELECT SUM(impact) FROM history WHERE username=?", (st.session_state.user,))
-    balance = c.fetchone()[0] or 0
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Hero Power (Balance)", f"{balance:.1f} pts")
-        if balance < 0:
-            st.warning("⚠️ Trash Monsters are attacking! Eat some fruit.")
-        else:
-            st.success("✅ Shield Heroes are holding the line!")
+    # Purpose Section
+    with st.expander("📖 Why are we here? (The Purpose)", expanded=True):
+        col_a, col_k = st.columns(2)
+        col_a.markdown("### 🧑‍🔬 For Adults\n**Goal:** Neutralize Oxidative Stress.\nEvery time you eat, your body creates 'Free Radicals' (Oxides). If you have too many, they damage your DNA. We track **Antioxidants** to stop that damage.")
+        col_k.markdown("### 🛡️ For Kids\n**Goal:** Defeat the Trash Monsters!\nJunk food creates monsters in your tummy. Healthy food sends in **Shield Heroes**. Keep your score green to stay a Superhero!")
 
-    with col2:
-        st.subheader("Your Story")
-        if balance >= 500:
-            st.info("Story: You have reached the Shield Fortress! You are a Legend.")
-        else:
-            st.write(f"Keep eating healthy! You need {500 - balance:.1f} more points to reach the Fortress.")
-
-# --- 7. LOG FOOD (Grams & Portions) ---
-elif menu == "Log Food":
-    st.title("⚖️ Precision Log")
-    
-    # Custom Food Add
-    with st.expander("➕ Add Custom Food Type"):
-        cf_name = st.text_input("Name")
-        cf_score = st.number_input("Score per 100g", -50, 50, 0)
-        if st.button("Save to My List"):
-            c.execute("INSERT INTO custom_foods VALUES (?,?,?)", (st.session_state.user, cf_name, cf_score))
-            conn.commit()
-            st.rerun()
-
-    # Log Intake
-    c.execute("SELECT food_name, impact_per_100g FROM custom_foods WHERE username=?", (st.session_state.user,))
-    customs = dict(c.fetchall())
-    full_db = {**FOOD_DB_100G, **customs}
-    
-    item = st.selectbox("Select Food", list(full_db.keys()))
-    grams = st.number_input("Grams (g)", 1, 1000, 100)
-    
-    # Allergy Check
-    if curr_user[4] and any(a.strip().lower() in item.lower() for a in curr_user[4].split(',')):
-        st.error(f"🚨 ALLERGY ALERT: This food contains {curr_user[4]}!")
-    
-    impact = (full_db[item] / 100) * grams
-    st.write(f"Result: **{impact:+.1f} pts**")
-    
-    if st.button("Eat and Log"):
-        c.execute("INSERT INTO history VALUES (?,?,?,?,?)", 
-                  (st.session_state.user, item, grams, impact, datetime.now()))
-        conn.commit()
-        st.success("Logged to backend!")
-
-# --- 8. PROFILE & BADGE EDIT ---
-elif menu == "Profile":
-    st.title("👤 User Profile")
-    st.write(f"**Email:** {curr_user[1]}")
-    st.write(f"**Allergies:** {curr_user[4]}")
+    # Stats
+    c.execute("SELECT SUM(impact), SUM(calories) FROM history WHERE username=?", (st.session_state.user,))
+    stats = c.fetchone()
+    bal, cals = stats[0] or 0, stats[1] or 0
     
     st.divider()
-    st.subheader("Edit Profile Badge (Your Photo)")
-    
-    # Logic: Only show badges if balance allows
-    c.execute("SELECT SUM(impact) FROM history WHERE username=?", (st.session_state.user,))
-    bal = c.fetchone()[0] or 0
-    
-    available = ["Beginner"]
-    if bal >= 50: available.append("Shield Scout")
-    if bal >= 150: available.append("Berry Knight")
-    if bal >= 300: available.append("Oxide Crusher")
-    if bal >= 500: available.append("Rainbow Master")
-    if curr_user[5]: available.append("Legendary Protector") # Pro only
+    c1, c2 = st.columns(2)
+    c1.metric("Oxidate Balance", f"{bal:.1f} pts", delta="Healthy" if bal >=0 else "Oxidized")
+    c2.metric("Total Calories", f"{int(cals)} kcal")
 
-    new_icon = st.selectbox("Equip Badge as Photo", available, index=available.index(curr_user[6]) if curr_user[6] in available else 0)
+# --- 7. LOG FOOD (API Integration) ---
+elif menu == "Log Food":
+    st.title("⚖️ Precision Intake & Calorie Tracker")
+    food_search = st.text_input("Search food (e.g., 'Blueberries' or 'Pizza')")
+    grams = st.number_input("Weight (Grams)", 1, 1000, 100)
     
-    if st.button("Update Profile Icon"):
-        c.execute("UPDATE users SET profile_icon=? WHERE username=?", (new_icon, st.session_state.user))
+    if food_search:
+        # Check Allergy
+        if user_info[3] and user_info[3].lower() in food_search.lower():
+            st.error(f"🚨 WARNING: {food_search} triggers your {user_info[3]} allergy!")
+        
+        # Calculate Scores
+        cal_per_100 = get_calories_api(food_search) or 150 # Fallback 150 if no API key
+        oxide_base = 15 if "fruit" in food_search or "veg" in food_search else -20 # Simple logic
+        
+        total_cals = (cal_per_100 / 100) * grams
+        total_impact = (oxide_base / 100) * grams
+        
+        st.write(f"📊 **Analysis:** {total_cals:.0f} Calories | {total_impact:+.1f} Oxide Score")
+        
+        if st.button("Log to Backend"):
+            c.execute("INSERT INTO history VALUES (?,?,?,?,?,?)", 
+                      (st.session_state.user, food_search, grams, total_impact, total_cals, datetime.now()))
+            conn.commit()
+            st.success("Saved to your history!")
+
+# --- 8. PROFILE (Badge System) ---
+elif menu == "Profile":
+    st.title("👤 Hero Profile")
+    st.write(f"Email: {user_info[1]}")
+    
+    # Badge Logic
+    c.execute("SELECT SUM(impact) FROM history WHERE username=?", (st.session_state.user,))
+    b = c.fetchone()[0] or 0
+    badges = {"🐣":0, "🛡️":100, "⚔️":300, "👑":500}
+    
+    selected_icon = st.selectbox("Select Earned Badge", [k for k,v in badges.items() if b >= v])
+    if st.button("Update Profile Photo"):
+        c.execute("UPDATE users SET icon=? WHERE username=?", (selected_icon, st.session_state.user))
         conn.commit()
         st.rerun()
 
-    if not curr_user[5]:
-        if st.button("Upgrade to Pro ($9)"):
+    if not user_info[4]:
+        if st.button("Upgrade to PRO ($9)"):
             c.execute("UPDATE users SET is_pro=1 WHERE username=?", (st.session_state.user,))
             conn.commit()
             st.balloons()
             st.rerun()
-
-# --- 9. ADMIN ---
-elif menu == "Admin":
-    if st.session_state.user == "admin":
-        st.title("👑 Admin Command")
-        users_df = pd.read_sql_query("SELECT username, email, is_pro, profile_icon FROM users", conn)
-        st.table(users_df)
-    else:
-        st.error("Admin Only.")
 
 conn.close()
